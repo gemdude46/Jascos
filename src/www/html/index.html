@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title> Jascos </title>
+		<style>
+			html, body {
+				margin: 0;
+				overflow: hidden;
+			}
+		</style>
+		<script src="../js/jascos.js"></script>
+		<script>
+			function run() {
+				const canvas = document.querySelector('canvas');
+				canvas.width = innerWidth;
+				canvas.height = innerHeight;
+				Jascos(canvas);
+			}
+
+			addEventListener('DOMContentLoaded', run);
+		</script>
+	</head>
+	<body>
+		<canvas></canvas>
+	</body>
+</html>
