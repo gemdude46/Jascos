@@ -15,8 +15,28 @@ var spout, sperr;
 
 var line = '';
 
+var cwd = '/';
+
 function runcmd() {
 	let args = line.replace(/ +/g, ' ').split(' ');
+	
+	if (args[0] === 'cd') {
+		let dir = args[1] || '/';
+
+		onresponse(9, msg => {
+			cwd = msg.cwd;
+			prompt();
+		});
+
+		postMessage({
+			action: 16,
+			dir: dir,
+			response_code: 9
+		});
+
+		return;
+	}
+
 	if (-1 === args[0].indexOf('/')) {
 		args[0] = '/programs/' + args[0];
 	}
@@ -119,11 +139,11 @@ function main() {
 				response_code: 7
 			});
 		}
-	}, 1024);
+	}, 256);
 }
 
 function prompt() {
-	print('$ ');
+	print(cwd + ' $ ');
 	running = false;
 	line = '';
 }

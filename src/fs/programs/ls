@@ -1,0 +1,18 @@
+function main(args) {
+	let dir = args[1] || '.';
+	onresponse(1, rsp => {
+		postMessage({
+			action: 3,
+			fd: rsp.err ? 2 : 1,
+			data: (rsp.err ? 'ERROR!' : rsp.files.join('\n')) + '\n'
+		});
+		postMessage({
+			action: 1
+		});
+	});
+	postMessage({
+		action: 17,
+		dir: dir,
+		response_code: 1
+	});
+}

@@ -97,9 +97,21 @@ function Jascos (screen, storagepf) {
 	}
 
 	function pathSplit(path) {
-		if (path.startsWith('/')) {
-			return path.substring(1).split('/');
+		if (path.endsWith('/')) {
+			path = path.substring(0, path.length - 1);
 		}
+		let patharr = path.substring(1).split('/').filter( x => x !== '.' );
+		for (let i = 0; i < patharr.length; i++) {
+			if (i && patharr[i] === '..') {
+				patharr.splice(i - 1, 2);
+				i = 0;
+			}
+			if (patharr[i] === '') {
+				patharr.splice(0, 1 + i);
+				i = 0;
+			}
+		}
+		return patharr;
 	}
 
 	/* An object representing a file that has been read.
@@ -135,7 +147,7 @@ function Jascos (screen, storagepf) {
 		PERMISSION_DENIED: 2,
 		INVALID_OPERATION: 3,
 		IS_DIRECTORY: 4,
-		iS_FILE: 5
+		IS_FILE: 5
 	});
 	
 	/* Abstract base class for filesystems.
@@ -143,6 +155,7 @@ function Jascos (screen, storagepf) {
 	 * Subclasses should implement:
 	 * constructor( ... )
 	 * Promise getFileInt(string[])
+	 * Promise listDirectoryInt(string[])
 	 */
 	class Filesystem {
 		constructor() {
@@ -161,6 +174,16 @@ function Jascos (screen, storagepf) {
 		getFile(path, allowed_types) {
 			return this.getFileInt(pathSplit(path), allowed_types);
 		}
+
+		/* List a directory.
+		 *
+		 * @argument path : string : The path to the directory.
+		 *
+		 * @returns Promise : A promise that will resolve to a string[] or reject to a fserror.
+		 */
+		listDirectory(path) {
+			return this.listDirectoryInt(pathSplit(path));
+		}
 	}
 	
 	/* Filesystem that is saved to localStorage.
@@ -178,20 +201,28 @@ function Jascos (screen, storagepf) {
 			lsset(this.name, this.root);
 		}
 
-		getFileInt(path, allowed_types) {
+		fetch(path) {
 			path = path.slice();
-			return new Promise( (resolve, reject) => {
-				let cd = this.root;
-				while (path.length) {
-					if ('$'+path[0] in cd) {
-						cd = cd['$'+path[0]];
-						if (path.length > 1 && typeof(cd) !== 'object') {
-							return reject(fserrors.NOT_FOUND);
-						}
-						path.splice(0, 1);
-					} else {
-						return reject(fserrors.NOT_FOUND);
+			let cd = this.root;
+			while (path.length) {
+				if ('$'+path[0] in cd) {
+					cd = cd['$'+path[0]];
+					if (path.length > 1 && typeof(cd) !== 'object') {
+						return fserrors.NOT_FOUND;
 					}
+					path.splice(0, 1);
+				} else {
+					return fserrors.NOT_FOUND;
+				}
+			}
+			return cd;
+		}
+
+		getFileInt(path, allowed_types) {
+			let cd = this.fetch(path);
+			return new Promise( (resolve, reject) => {
+				if (typeof(cd) === 'number') {
+					return reject(cd);
 				}
 				if (typeof(cd) === 'string') {
 					if (allowed_types & filetypes.FILE) {
@@ -208,6 +239,19 @@ function Jascos (screen, storagepf) {
 					}
 				}
 
+			});
+		}
+
+		listDirectoryInt(path) {
+			let dir = this.fetch(path);
+			return new Promise( (resolve, reject) => {
+				if (typeof(dir) === 'number') {
+					return reject(dir);
+				}
+				if (typeof(dir) === 'string') {
+					return reject(fserrors.IS_FILE);
+				}
+				return resolve(Object.keys(dir).filter( k => k.startsWith('$') ).map( k => k.substring(1) ));
 			});
 		}
 	}
@@ -247,6 +291,8 @@ function Jascos (screen, storagepf) {
 	 * CLOSEFD: Closes a file descriptor.
 	 * SPAWNSUBPROCESS: Spawns a subprocess.
 	 * GETPROCESSSTATE: Gets the state of a process.
+	 * CHANGEWORKINGDIRECTORY: Changes the cwd of the process.
+	 * LISTDIRECTORY: Lists the files in a directory.
 	 * DRAW: Draws to the screen.
 	 * LOGDATA: Output data to the JavaScript console. NOT STANDARDIZED!
 	 */
@@ -258,6 +304,8 @@ function Jascos (screen, storagepf) {
 		CLOSEFD: 5,
 		SPAWNSUBPROCESS: 8,
 		GETPROCESSSTATE: 9,
+		CHANGEWORKINGDIRECTORY: 16,
+		LISTDIRECTORY: 17,
 		DRAW: 32,
 		LOGDATA: 255
 	});
@@ -267,7 +315,7 @@ function Jascos (screen, storagepf) {
 	 * @argument args : string[] : The arguments to pass to the process.
 	 */
 	class Process {
-		constructor(args) {
+		constructor(prnt, args) {
 			let This = this;
 			this.pid = 0|(65536 * Math.random());
 			this.argv = args;
@@ -276,6 +324,8 @@ function Jascos (screen, storagepf) {
 			this.stdin = new Pipe();
 			this.stdout = new Pipe();
 			this.stderr = new Pipe();
+			this.cwd = prnt ? prnt.cwd : '/';
+			this.parentpid = prnt ? prnt.pid : 0;
 			this.openfds = [this.stdin, this.stdout, this.stderr];
 
 			getFile(args[0]).then( file => {
@@ -351,7 +401,7 @@ function Jascos (screen, storagepf) {
 					break;
 				case processactions.SPAWNSUBPROCESS:
 					{
-						let proc = new Process(message.args);
+						let proc = new Process(this, message.args);
 						processes.push(proc);
 						this.openfds.push(proc.stdin);
 						this.openfds.push(proc.stdout);
@@ -375,6 +425,49 @@ function Jascos (screen, storagepf) {
 							type: 'response',
 							code: message.response_code,
 							state: proc ? proc.state : states.FINISHED
+						});
+					}
+					break;
+				case processactions.CHANGEWORKINGDIRECTORY:
+					{
+						let This = this;
+						let newcwd = '/' + pathSplit(this.cwd + '/' + message.dir).join('/');
+						rootfs.getFile(newcwd, filetypes.DIRECTORY).then( _ => {
+							This.cwd = newcwd;
+							if ('response_code' in message) {
+								This.worker.postMessage({
+									type: 'response',
+									code: message.response_code,
+									cwd: This.cwd
+								});
+							}
+						}).catch( err => {
+							if ('response_code' in message) {
+								This.worker.postMessage({
+									type: 'response',
+									code: message.response_code,
+									cwd: This.cwd,
+									err: err
+								});
+							}
+						});
+					}
+					break;
+				case processactions.LISTDIRECTORY:
+					{
+						let This = this;
+						rootfs.listDirectory(this.cwd + '/' + message.dir).then( list => {
+							This.worker.postMessage({
+								type: 'response',
+								code: message.response_code,
+								files: list
+							});
+						}).catch( err => {
+							This.worker.postMessage({
+								type: 'response',
+								code: message.response_code,
+								err: err
+							});
 						});
 					}
 					break;
@@ -404,7 +497,7 @@ function Jascos (screen, storagepf) {
 	
 	// Boots the OS.
 	function boot() {
-		processes.push( new Process([ '/boot/init' ]) );
+		processes.push( new Process(null, [ '/boot/init' ]) );
 		document.addEventListener('keypress', evt => {
 			processes[0].worker.postMessage({
 				type: 'interrupt',
