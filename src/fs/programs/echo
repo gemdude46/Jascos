@@ -1,0 +1,10 @@
+function main(args) {
+postMessage({
+action: 3,
+fd: 1,
+data: args.slice(1).join(' ') + '\n'
+});
+postMessage({
+action: 1
+});
+}

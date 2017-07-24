@@ -1,0 +1,116 @@
+var screen = Array(24).fill(null).map( _ => Array(80).fill(' ') );
+
+var cursor = {ln: 0, col: 0};
+
+function updateScreen() {
+let data = screen.map( line => line.join('') ).join('');
+postMessage({
+action: 32,
+form: 'text-display',
+data: data
+});
+}
+
+function scrollUp() {
+for (let ln = 0; ln < 23; ln++) {
+for (let col = 0; col < 80; col++) {
+screen[ln][col] = screen[1+ln][col];
+}
+}
+screen[23].fill(' ');
+}
+
+function writeChar(c) {
+if (c.length !== 1) throw TypeError('Expected char');
+
+if (c === '\t') {
+do {
+writeChar(' ');
+} while (cursor.col & 7);
+} else if (c === '\r') {
+cursor.col = 0;
+} else if (c === '\n') {
+cursor.col = 0;
+if (24 === ++cursor.ln) {
+cursor.ln = 23;
+scrollUp();
+}
+} else if (c === '\b') {
+if (-1 === --cursor.col) {
+cursor.col = 0;
+}
+screen[cursor.ln][cursor.col] = ' ';
+} else {
+screen[cursor.ln][cursor.col] = c;
+if (80 === ++cursor.col) {
+cursor.col = 0;
+if (24 === ++cursor.ln) {
+cursor.ln = 23;
+scrollUp();
+}
+}
+}
+}
+
+function writeString(s) {
+for (let c of s) {
+writeChar(c);
+}
+}
+
+function writeData(msg) {
+writeString(msg.data);
+updateScreen();
+}
+
+function print(s) {
+writeString(s + '\n');
+}
+
+function main(args, pid) {
+print('Jascos DEV 0.0.1');
+print('Starting OS...');
+print('System Time:\t' + Date.now() + '\t' + new Date());
+print('Init PID:\t' + pid);
+
+updateScreen();
+
+onresponse(42, msg => {
+handleinterrupt(101, writeData);
+handleinterrupt(102, writeData);
+
+postMessage({
+action: 4,
+fd: msg.stdout,
+sig: 101
+});
+
+postMessage({
+action: 4,
+fd: msg.stderr,
+sig: 102
+});
+
+handleinterrupt(1, evt => {
+let key = (evt.key.length === 1 ? evt.key : {
+'Enter': '\n',
+'Tab': '\t',
+'Backspace': '\b'
+}[evt.key]);
+if (key) {
+postMessage({
+action: 3,
+fd: msg.stdin,
+data: key
+});
+}
+});
+});
+
+postMessage({
+action: 8,
+args: [ '/programs/shell' ],
+response_code: 42
+});
+}
+

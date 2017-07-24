@@ -1,0 +1,10 @@
+function main() {
+postMessage({
+action: 3,
+fd: 1,
+data: (new Date()).toString() + '\n'
+});
+postMessage({
+action: 1
+});
+}

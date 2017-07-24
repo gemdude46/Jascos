@@ -1,0 +1,129 @@
+function print(str) {
+	postMessage({
+		action: 3,
+		fd: 1,
+		data: str
+	});
+}
+
+var running;
+
+var infwfd;
+var spid;
+
+var spout, sperr;
+
+var line = '';
+
+function runcmd() {
+	let args = line.replace(/ +/g, ' ').split(' ');
+	if (-1 === args[0].indexOf('/')) {
+		args[0] = '/programs/' + args[0];
+	}
+
+	onresponse(1, rsp => {
+		infwfd = rsp.stdin;
+		spid = rsp.pid;
+		spout = rsp.stdout;
+		sperr = rsp.stderr;
+		running = true;
+
+		postMessage({
+			action: 4,
+			fd: rsp.stdout,
+			sig: 102
+		});
+		postMessage({
+			action: 4,
+			fd: rsp.stderr,
+			sig: 102
+		});
+	});
+
+	postMessage({
+		action: 8,
+		args: args,
+		response_code: 1
+	});
+}
+
+function main() {
+	handleinterrupt(102, msg => {
+		print(msg.data);
+	});
+	
+	prompt();
+
+	handleinterrupt(101, msg => {
+		if (running) {
+			postMessage({
+				action: 3,
+				fd: infwfd,
+				data: msg.data
+			});
+		} else {
+			for (let c of msg.data) {
+				if (c === '\b') {
+					if (line) {
+						line = line.substring(0, line.length - 1);
+						print(c);
+					}
+				} else if (c === '\n') {
+					print(c)
+					if (line) {
+						runcmd();
+					} else {
+						prompt();
+					}
+				} else {
+					print(c);
+					line += c;
+				}
+			}
+		}
+	});
+
+	postMessage({
+		action: 4,
+		fd: 0,
+		sig: 101
+	});
+
+	function repromptifdead(msg) {
+		onresponse(7, repromptifdead);
+		if (msg.state === 3 && running) {
+			postMessage({
+				action: 5,
+				fd: infwfd
+			});
+			postMessage({
+				action: 5,
+				fd: spout
+			});
+			postMessage({
+				action: 5,
+				fd: sperr
+			});
+			prompt();
+		} else if (msg.state === -1) {
+			throw Error('-1')
+		}
+	}
+	onresponse(7, repromptifdead);
+
+	setInterval( () => {
+		if (running) {
+			postMessage({
+				action: 9,
+				pid: spid,
+				response_code: 7
+			});
+		}
+	}, 1024);
+}
+
+function prompt() {
+	print('$ ');
+	running = false;
+	line = '';
+}

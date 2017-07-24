@@ -1,0 +1,10 @@
+function main() {
+postMessage({
+action: 3,
+fd: 1,
+data: 'Hello, world!\n'
+});
+postMessage({
+action: 1
+});
+}
